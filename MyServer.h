@@ -9,6 +9,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonValue>
+#include <QMap>
+
 using namespace Tufao;
 
 /*
@@ -33,6 +35,17 @@ using namespace Tufao;
         ]
     }
 */
+
+typedef struct UserInfo
+{
+    QString username;
+    double lat;
+    double lng;
+    QString type;
+    QString session;
+    int tickCounter;
+} UserInfo;
+
 class MyServer : public QObject
 {
     Q_OBJECT
@@ -42,8 +55,15 @@ public:
     Tufao::HttpServer* _server;
 
     void handle(HttpServerRequest& req, HttpServerResponse& rep);
+
+    QJsonObject handleQuery(QJsonObject obj);
     QJsonObject handleInsert(QJsonObject obj);
     QJsonObject handleInsertP(QJsonObject obj);
+    QJsonObject handleInsertT(QJsonObject obj);
+
+    QMap<QString, UserInfo*> _sessions;
+
+    void timerEvent(QTimerEvent *ev);
 signals:
 
 public slots:

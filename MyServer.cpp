@@ -23,6 +23,9 @@ MyServer::MyServer(QObject *parent) : QObject(parent)
         qDebug() << "listen error";
         exit(2);
     }
+
+    // 十分钟
+    startTimer(10*60*1000);
 }
 
 void MyServer::handle(HttpServerRequest &req, HttpServerResponse &rep)
@@ -41,9 +44,62 @@ void MyServer::handle(HttpServerRequest &req, HttpServerResponse &rep)
     {
         respObj = handleInsert(obj);
     }
+    else if(cmd == HC_QUERY)
+    {
+        respObj = handleQuery(obj);
+    }
 
     rep.end(QJsonDocument(respObj).toJson());
     return;
+}
+
+/*
+    cmd: query,
+    object: tuser,
+    username: xxxx,
+    password: yyy
+    codition:xxx
+    condition:yyy
+
+*/
+QJsonObject MyServer::handleQuery(QJsonObject obj)
+{
+    QString object = obj.value(HC_OBJECT).toString(); // tuser
+    obj.remove(HC_CMD);
+    obj.remove(HC_OBJECT);
+
+    QStringList keys = obj.keys();
+    QStringList filters; // username='xxx'   password='yyy'
+    foreach (QString key, keys) {
+        filters += QString("%1='%2'").arg(key).arg(obj.value(key).toString());
+    }
+
+    QString filter = filters.join(" and ");
+
+    QSqlTableModel model;
+    model.setTable(object);
+
+    model.setFilter(filter); // where子句
+    model.select(); // 最多只select 一个记录
+
+    QJsonArray arr;
+    QSqlRecord record = model.record();
+    for(int row=0; row<model.rowCount(); ++row)
+    {
+        QJsonObject tmp;
+        for(int col=0; col<record.count(); ++col)
+        {
+            tmp.insert(record.fieldName(col), model.data(model.index(row, col)).toString());
+        }
+        arr.append(tmp);
+    }
+
+    QJsonObject respObject;
+    respObject.insert(HC_RESULT, HC_OK);
+    respObject.insert(HC_COUNT, model.rowCount());
+    respObject.insert(HC_DATA, arr);
+
+    return respObject;
 }
 
 QJsonObject MyServer::handleInsert(QJsonObject obj)
@@ -56,6 +112,10 @@ QJsonObject MyServer::handleInsert(QJsonObject obj)
     if(type == HC_PERMANENT)
     {
         respObj = handleInsertP(obj);
+    }
+    if(type == HC_TEMP)
+    {
+        respObj = handleInsertT(obj);
     }
 
     return respObj;
@@ -102,6 +162,72 @@ QJsonObject MyServer::handleInsertP(QJsonObject obj)
 
 RETURN:
     return respObj;
+}
+
+QJsonObject MyServer::handleInsertT(QJsonObject obj)
+{
+    QJsonObject resp;
+    resp.insert(HC_RESULT, HC_OK);
+    /*
+                insertObj.insert(HC_CMD, HC_INSERT);
+                insertObj.insert(HC_OBJECT, HC_SESSION);
+                insertObj.insert(HC_USERNAME, HC_USERNAME);
+                insertObj.insert(HC_SESSION, uuid);// session怎么产生
+                insertObj.insert(HC_LOGINTYPE, type);
+                insertObj.insert(HC_TYPE, HC_TEMP);
+*/
+    QString object = obj.value(HC_OBJECT).toString();
+    if(object == HC_SESSION)
+    {
+        QString session = obj.value(HC_SESSION).toString();
+        QString username = obj.value(HC_USERNAME).toString();
+        QString loginType = obj.value(HC_LOGINTYPE).toString();
+
+        UserInfo* info = _sessions[session];
+        if(info == NULL)
+        {
+            info = new UserInfo;
+            _sessions.insert(session, info);
+            info->username = username;
+            info->type = loginType;
+            info->lat = 0;
+            info->lng = 0;
+            info->session = session;
+            info->tickCounter = 0;
+
+            qDebug() << "insert session " << session << username;
+        }
+        else
+        {
+            info->tickCounter = 0;
+            info->username = username;
+            info->session = session;
+
+            qDebug() << "modify session " << session << username;
+        }
+
+        qDebug() << "session count is" << _sessions.count();
+    }
+    return resp;
+}
+
+//
+void MyServer::timerEvent(QTimerEvent *)
+{
+    for(auto it = _sessions.begin(); it != _sessions.end();)
+    {
+        UserInfo* info = it.value();
+        info->tickCounter++;
+        if(info->tickCounter >= 6)
+        {
+            delete info;
+            it = _sessions.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
 }
 
 
