@@ -44,7 +44,27 @@ typedef struct UserInfo
     QString type;
     QString session;
     int tickCounter;
+    QByteArray getHash; // vf2g
 } UserInfo;
+
+class GeoNode
+{
+public:
+    GeoNode* child[32];
+    GeoNode* parent;
+
+    GeoNode()
+    {
+        memset(child, 0, sizeof(child));
+        parent = NULL;
+    }
+};
+
+class GeoNodeLeaf : public GeoNode
+{
+public:
+    QList<UserInfo*> users;
+};
 
 class MyServer : public QObject
 {
@@ -63,6 +83,9 @@ public:
     QJsonObject handleUpdate(QJsonObject obj);
 
     QMap<QString, UserInfo*> _users;
+    GeoNode _head;
+
+    GeoNodeLeaf* getLeaf(QByteArray geohash);
 
     void timerEvent(QTimerEvent *ev);
 signals:

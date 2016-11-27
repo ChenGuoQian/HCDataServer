@@ -9,6 +9,67 @@
 #include <QSqlRecord>
 #include <QSqlField>
 
+char *getGeohash(double lng, double lat, char *buf, int bits)
+{
+    uint64_t lngLatBits = 0;
+
+    double lngMin = -180;
+    double lngMax = 180;
+    double latMin = -90;
+    double latMax = 90;
+
+    for(int i=0; i<bits; ++i)
+    {
+        lngLatBits<<=1;
+
+        double lngMid = (lngMax + lngMin)/2;
+        if(lng > lngMid)
+        {
+            lngLatBits += 1;
+            lngMin = lngMid;
+        }
+        else
+        {
+            lngMax = lngMid;
+        }
+
+        lngLatBits <<=1;
+
+        double latMid = (latMax + latMin)/2;
+        if(lat > latMid)
+        {
+            lngLatBits += 1;
+            latMin = latMid;
+        }
+        else
+        {
+            latMax = latMid;
+        }
+    }
+
+    static char base32encode[] = "0123456789abcdefghijklmnopqrstuvwxyz";
+
+    // 11010 10010 10010 10010 10101 11011 00100 11000
+    // a     b     c     1     2     x     2     3    \0
+    int i;
+    for(i=0;i <8; ++i)
+    {
+        uint32_t index = lngLatBits >> (35-i*5);
+        index &= 31;
+        buf[i] = base32encode[index];
+    }
+
+    buf[i] = 0;
+    return buf;
+}
+
+QByteArray getGeohash(double lng, double lat, int bits = 20)
+{
+    char buf[10]; // 8位的长度经度是偏差是19米，8位长度对应的bits是20，40位整数
+    geohash(lng, lat, buf, bits);
+    return QByteArray(buf);
+}
+
 MyServer::MyServer(QObject *parent) : QObject(parent)
 {
     _server = new HttpServer;
@@ -250,18 +311,63 @@ QJsonObject MyServer::handleUpdate(QJsonObject obj)
             return resp;
         }
 
-        _users[session]->lng = obj.value(HC_LNG).toString().toDouble();
-        _users[session]->lat = obj.value(HC_LAT).toString().toDouble();
+        double lng = obj.value(HC_LNG).toString().toDouble();
+        double lat = obj.value(HC_LAT).toString().toDouble();
 
-        qDebug() << "lng:" <<  _users[session]->lng << "lat:" <<  _users[session]->lat;
+        UserInfo* user = _users[session];
+
+        user->lng = lng;
+        user->lat = lat;
+
+        QByteArray geohash = getGeohash(lng, lat);
+        if(user->getHash != geohash)
+        {
+            // 说明司机正在越界
+            GeoNodeLeaf* leafOld = getLeaf(user->getHash);
+            GeoNodeLeaf* leafNew = getLeaf(geohash);
+
+            leafOld->users.removeOne(user);
+            leafNew->users.append(user);
+
+            user->getHash = geohash;
+        }
 
         // 客户端向服务器发送数据时，需要重置tickCounter，避免该用户被服务器踢掉
-        _users[session]->tickCounter = 0;
+        user->tickCounter = 0;
 
         resp.insert(HC_RESULT, HC_OK);
     }
 
     return resp;
+}
+
+GeoNodeLeaf *MyServer::getLeaf(QByteArray geohash)
+{
+   // static char base32encode[] = "0123456789abcdefghijklmnopqrstuvwxyz";
+    GeoNode* current = &_head;
+    GeoNode* tmp;
+    for(int i=0; i<8; ++i)
+    {
+        int idx;
+        char ch = geohash.at(i);
+        if(ch <= '9')
+            idx = ch-'0';
+        else
+            idx = ch-'a' + 10;
+
+        tmp = current.child[idx];
+        if(tmp == NULL)
+        {
+            if(i<7)
+                tmp = new GeoNode;
+            else
+                tmp = new GeoNodeLeaf;
+            current->child[idx] = tmp;
+        }
+        current = tmp;
+    }
+
+    return (GeoNodeLeaf*)current;
 }
 
 //
@@ -273,6 +379,9 @@ void MyServer::timerEvent(QTimerEvent *)
         info->tickCounter++;
         if(info->tickCounter >= 6)
         {
+            GeoNodeLeaf* leaf = getLeaf(info->getHash);
+            leaf->users.removeOne(info);
+
             delete info;
             it = _users.erase(it);
         }
