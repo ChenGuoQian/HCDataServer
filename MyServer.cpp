@@ -8,6 +8,7 @@
 #include <QSqlError>
 #include <QSqlRecord>
 #include <QSqlField>
+#include <QDateTime>
 
 char *getGeohash(double lng, double lat, char *buf, int bits)
 {
@@ -66,7 +67,7 @@ char *getGeohash(double lng, double lat, char *buf, int bits)
 QByteArray getGeohash(double lng, double lat, int bits = 20)
 {
     char buf[10]; // 8位的长度经度是偏差是19米，8位长度对应的bits是20，40位整数
-    geohash(lng, lat, buf, bits);
+    getGeohash(lng, lat, buf, bits);
     return QByteArray(buf);
 }
 
@@ -268,15 +269,20 @@ QJsonObject MyServer::handleInsertT(QJsonObject obj)
             info->lat = 0;
             info->lng = 0;
             info->session = session;
-            info->tickCounter = 0;
+            // 获得当前时间戳值，这个值是从1970：1:1:00:00:00
+            info->timestamp = QDateTime::currentMSecsSinceEpoch();
+
+            _lru.append(info);
 
             qDebug() << "insert session " << session << username;
         }
         else
         {
-            info->tickCounter = 0;
+            info->timestamp = QDateTime::currentMSecsSinceEpoch();
             info->username = username;
             info->session = session;
+            _lru.removeOne(info);
+            _lru.append(info);
 
             qDebug() << "modify session " << session << username;
         }
@@ -333,7 +339,9 @@ QJsonObject MyServer::handleUpdate(QJsonObject obj)
         }
 
         // 客户端向服务器发送数据时，需要重置tickCounter，避免该用户被服务器踢掉
-        user->tickCounter = 0;
+        user->timestamp = QDateTime::currentMSecsSinceEpoch();
+        _lru.removeOne(user);
+        _lru.append(user);
 
         resp.insert(HC_RESULT, HC_OK);
     }
@@ -355,7 +363,7 @@ GeoNodeLeaf *MyServer::getLeaf(QByteArray geohash)
         else
             idx = ch-'a' + 10;
 
-        tmp = current.child[idx];
+        tmp = current->child[idx];
         if(tmp == NULL)
         {
             if(i<7)
@@ -373,6 +381,27 @@ GeoNodeLeaf *MyServer::getLeaf(QByteArray geohash)
 //
 void MyServer::timerEvent(QTimerEvent *)
 {
+    quint64 ts = QDateTime::currentMSecsSinceEpoch();
+
+    for(auto it = _lru.begin(); it!= _lru.end();)
+    {
+        UserInfo* info = *it;
+        if(ts - info->timestamp > 30*60*1000)
+        {
+            GeoNodeLeaf* leaf = getLeaf(info->getHash);
+            leaf->users.removeOne(info);
+
+            _users.remove(info->session);
+            it = _lru.erase(it);
+
+            delete info;
+        }
+        else
+        {
+            break;
+        }
+    }
+#if 0
     for(auto it = _users.begin(); it != _users.end();)
     {
         UserInfo* info = it.value();
@@ -390,6 +419,7 @@ void MyServer::timerEvent(QTimerEvent *)
             ++it;
         }
     }
+#endif
 }
 
 

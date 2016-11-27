@@ -43,7 +43,7 @@ typedef struct UserInfo
     double lng;
     QString type;
     QString session;
-    int tickCounter;
+    quint64 timestamp; // 时间点 23:00:59 24:00:00 记录最近访问的时间点
     QByteArray getHash; // vf2g
 } UserInfo;
 
@@ -84,6 +84,8 @@ public:
 
     QMap<QString, UserInfo*> _users;
     GeoNode _head;
+    // 保存那些是经常用的，那些是不经常使用的，经常使用的在尾部
+    QList<UserInfo*> _lru;
 
     GeoNodeLeaf* getLeaf(QByteArray geohash);
 
