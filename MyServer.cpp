@@ -40,7 +40,21 @@ void MyServer::handle(HttpServerRequest &req, HttpServerResponse &rep)
     respObj.insert(HC_REASON, HC_UNKNOWN);
 
     QString cmd = obj.value(HC_CMD).toString();
-    if(cmd == HC_INSERT)
+
+    /*
+        {
+            cmd: update,
+            object: position,
+            session: {xxxx-xxxxx-xxxxx-xxxxx},
+            lng: 118.19098111,
+            lat: 39.11882711
+        }
+    */
+    if(cmd == HC_UPDATE)
+    {
+        respObj = handleUpdate(obj);
+    }
+    else if(cmd == HC_INSERT)
     {
         respObj = handleInsert(obj);
     }
@@ -183,11 +197,11 @@ QJsonObject MyServer::handleInsertT(QJsonObject obj)
         QString username = obj.value(HC_USERNAME).toString();
         QString loginType = obj.value(HC_LOGINTYPE).toString();
 
-        UserInfo* info = _sessions[session];
+        UserInfo* info = _users[session];
         if(info == NULL)
         {
             info = new UserInfo;
-            _sessions.insert(session, info);
+            _users.insert(session, info);
             info->username = username;
             info->type = loginType;
             info->lat = 0;
@@ -206,22 +220,61 @@ QJsonObject MyServer::handleInsertT(QJsonObject obj)
             qDebug() << "modify session " << session << username;
         }
 
-        qDebug() << "session count is" << _sessions.count();
+        qDebug() << "session count is" << _users.count();
     }
+    return resp;
+}
+
+/*
+    {
+        cmd: update,
+        object: position,
+        session: {xxxx-xxxxx-xxxxx-xxxxx},
+        lng: 118.19098111,
+        lat: 39.11882711
+    }
+*/
+QJsonObject MyServer::handleUpdate(QJsonObject obj)
+{
+    QJsonObject resp;
+    resp.insert(HC_RESULT, HC_ERR);
+    if(obj.value(HC_OBJECT).toString() == HC_POSITION)
+    {
+        QString session = obj.value(HC_SESSION).toString();
+      //  UserInfo* info = _users[session];
+
+        // 不能找到用户信息，说明该用户已经好久没有操作，session已经结束
+        if(_users.find(session) == _users.end())
+        {
+            resp.insert(HC_REASON, "can not find session");
+            return resp;
+        }
+
+        _users[session]->lng = obj.value(HC_LNG).toString().toDouble();
+        _users[session]->lat = obj.value(HC_LAT).toString().toDouble();
+
+        qDebug() << "lng:" <<  _users[session]->lng << "lat:" <<  _users[session]->lat;
+
+        // 客户端向服务器发送数据时，需要重置tickCounter，避免该用户被服务器踢掉
+        _users[session]->tickCounter = 0;
+
+        resp.insert(HC_RESULT, HC_OK);
+    }
+
     return resp;
 }
 
 //
 void MyServer::timerEvent(QTimerEvent *)
 {
-    for(auto it = _sessions.begin(); it != _sessions.end();)
+    for(auto it = _users.begin(); it != _users.end();)
     {
         UserInfo* info = it.value();
         info->tickCounter++;
         if(info->tickCounter >= 6)
         {
             delete info;
-            it = _sessions.erase(it);
+            it = _users.erase(it);
         }
         else
         {

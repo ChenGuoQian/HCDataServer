@@ -60,8 +60,9 @@ public:
     QJsonObject handleInsert(QJsonObject obj);
     QJsonObject handleInsertP(QJsonObject obj);
     QJsonObject handleInsertT(QJsonObject obj);
+    QJsonObject handleUpdate(QJsonObject obj);
 
-    QMap<QString, UserInfo*> _sessions;
+    QMap<QString, UserInfo*> _users;
 
     void timerEvent(QTimerEvent *ev);
 signals:
